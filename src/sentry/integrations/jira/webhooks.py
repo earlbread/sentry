@@ -6,9 +6,7 @@ from django.views.decorators.csrf import csrf_exempt
 from sentry.api.base import Endpoint
 
 from sentry.integrations.atlassian_connect import AtlassianConnectValidationError, get_integration_from_jwt
-from sentry.models import (
-    sync_group_assignee_inbound, Activity, Group, GroupStatus, ProjectIntegration
-)
+from sentry.models import sync_group_assignee_inbound
 
 logger = logging.getLogger('sentry.integrations.jira.webhooks')
 
@@ -38,7 +36,7 @@ class JiraIssueUpdatedWebhook(Endpoint):
         issue_key = data['issue']['key']
 
         try:
-            change_log = next(
+            changelog = next(
                 item for item in data['changelog']['items'] if item['field'] == 'status'
             )
         except StopIteration:
@@ -50,72 +48,12 @@ class JiraIssueUpdatedWebhook(Endpoint):
             )
             return
 
-        affected_groups = list(
-            Group.objects.get_groups_by_external_issue(
-                integration, issue_key,
-            ).select_related('project'),
-        )
+        installation = integration.get_installation()
 
-        project_integration_configs = {
-            pi.project_id: pi.config for pi in ProjectIntegration.objects.filter(
-                project_id__in=[g.project_id for g in affected_groups]
-            )
-        }
-
-        groups_to_resolve = []
-        groups_to_unresolve = []
-
-        for group in affected_groups:
-            project_config = project_integration_configs.get(group.project_id, {})
-            resolve_when = project_config.get('resolve_when')
-            unresolve_when = project_config.get('unresolve_when')
-            # TODO(jess): make sure config validation doesn't
-            # allow these to be the same
-            if (unresolve_when and resolve_when) and (resolve_when == unresolve_when):
-                logger.warning(
-                    'project-config-conflict', extra={
-                        'project_id': group.project_id,
-                        'integration_id': integration.id,
-                    }
-                )
-                continue
-
-            if change_log['to'] == unresolve_when:
-                groups_to_unresolve.append(group)
-            elif change_log['to'] == resolve_when:
-                groups_to_resolve.append(group)
-
-        if groups_to_resolve:
-            updated_resolve = Group.objects.filter(
-                id__in=[g.id for g in groups_to_resolve],
-            ).exclude(
-                status=GroupStatus.RESOLVED,
-            ).update(
-                status=GroupStatus.RESOLVED,
-            )
-            if updated_resolve:
-                for group in groups_to_resolve:
-                    Activity.objects.create(
-                        project=group.project,
-                        group=group,
-                        type=Activity.SET_RESOLVED,
-                    )
-
-        if groups_to_unresolve:
-            updated_unresolve = Group.objects.filter(
-                id__in=[g.id for g in groups_to_resolve],
-            ).exclude(
-                status=GroupStatus.UNRESOLVED,
-            ).update(
-                status=GroupStatus.UNRESOLVED,
-            )
-            if updated_unresolve:
-                for group in groups_to_unresolve:
-                    Activity.objects.create(
-                        project=group.project,
-                        group=group,
-                        type=Activity.SET_UNRESOLVED,
-                    )
+        installation.sync_status_inbound(issue_key, {
+            'changelog': changelog,
+            'issue': data['issue'],
+        })
 
     def post(self, request, *args, **kwargs):
         try:

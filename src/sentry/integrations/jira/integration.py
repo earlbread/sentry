@@ -511,6 +511,18 @@ class JiraIntegration(Integration, IssueSyncMixin):
                 }
             )
 
+    def get_external_project_id(self, data):
+        """
+        Given webhook data, pull out external project id
+        """
+        return data['issue']['fields']['project']['id']
+
+    def get_external_issue_status(self, data):
+        """
+        Given webhook data, pull out external issue status
+        """
+        return data['changelog']['to']
+
 
 class JiraIntegrationProvider(IntegrationProvider):
     key = 'jira'
