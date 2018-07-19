@@ -48,12 +48,13 @@ class JiraIssueUpdatedWebhook(Endpoint):
             )
             return
 
-        installation = integration.get_installation()
+        for org_id in integration.organizations.values_list('id', flat=True):
+            installation = integration.get_installation(org_id)
 
-        installation.sync_status_inbound(issue_key, {
-            'changelog': changelog,
-            'issue': data['issue'],
-        })
+            installation.sync_status_inbound(issue_key, {
+                'changelog': changelog,
+                'issue': data['issue'],
+            })
 
     def post(self, request, *args, **kwargs):
         try:
